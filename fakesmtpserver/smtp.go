@@ -1,6 +1,7 @@
 package fakesmtpserver
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,19 +14,44 @@ import (
 	"github.com/jhillyerd/enmime"
 )
 
+// ErrInvalidSearchField is returned when an invalid search field is specified.
+var ErrInvalidSearchField = errors.New("invalid search field")
+
 const (
 	SMTPAddr = "127.0.0.1:10025"
 	HOSTNAME = "fakeserver"
+
+	// Field names for search validation.
+	FieldTo   = "to"
+	FieldCC   = "cc"
+	FieldBCC  = "bcc"
+	FieldFrom = "from"
 )
 
 type (
 	smtpView struct {
-		Headers        []*smtpViewHeader `json:"headers"`
-		ToAddressList  []*mail.Address   `json:"to"`
-		CcAddressList  []*mail.Address   `json:"cc"`
-		BccAddressList []*mail.Address   `json:"bcc"`
-		Text           string            `json:"text"`
-		HTML           string            `json:"html"`
+		// Email Content (parsed from data via enmime)
+		Headers         []*smtpViewHeader `json:"headers"`
+		FromAddressList []*mail.Address   `json:"from"` // From header
+		ToAddressList   []*mail.Address   `json:"to"`   // To header
+		CcAddressList   []*mail.Address   `json:"cc"`   // CC header
+		BccAddressList  []*mail.Address   `json:"bcc"`  // BCC header
+		Text            string            `json:"text"`
+		HTML            string            `json:"html"`
+
+		// SMTP Transaction Data (from session)
+		SMTPFrom     string    `json:"smtpFrom"`     // MAIL FROM address
+		SMTPTo       []string  `json:"smtpTo"`       // RCPT TO addresses
+		ReceivedTime time.Time `json:"receivedTime"` // Session timestamp
+
+		// Connection Metadata
+		ClientAddr string `json:"clientAddr"` // Remote IP
+		ClientHost string `json:"clientHost"` // HELO/EHLO hostname
+		TLSUsed    bool   `json:"tlsUsed"`    // TLS connection
+
+		// Authentication (if implemented)
+		Authenticated bool   `json:"authenticated"` // Auth success
+		AuthMechanism string `json:"authMechanism"` // PLAIN, LOGIN, etc.
 	}
 
 	smtpViewHeader struct {
@@ -41,11 +67,17 @@ type smtpBackend struct {
 
 var sharedBackend = &smtpBackend{} //nolint:gochecknoglobals
 
-func (b *smtpBackend) NewSession(_ *smtp.Conn) (smtp.Session, error) {
+func (b *smtpBackend) NewSession(conn *smtp.Conn) (smtp.Session, error) {
 	slog.Info("NewSession")
 
+	_, tlsOK := conn.TLSConnectionState()
 	s := &smtpSession{
 		receivedTime: time.Now(),
+		clientAddr:   conn.Conn().RemoteAddr().String(),
+		clientHost:   conn.Hostname(),
+		tlsUsed:      tlsOK,
+		rcptTo:       make([]string, 0),
+		rcptOpts:     make([]*smtp.RcptOptions, 0),
 	}
 
 	b.mux.Lock()
@@ -57,49 +89,53 @@ func (b *smtpBackend) NewSession(_ *smtp.Conn) (smtp.Session, error) {
 
 func (b *smtpBackend) GetAllData() []smtpView {
 	b.mux.RLock()
-	messages := make([]string, len(b.sessions))
-	for i, s := range b.sessions {
-		messages[i] = s.data
-	}
+	sessions := make([]*smtpSession, len(b.sessions))
+	copy(sessions, b.sessions)
 	b.mux.RUnlock()
 
-	result := make([]smtpView, len(messages))
-	for i, s := range messages {
-		e, err := enmime.ReadEnvelope(strings.NewReader(s))
-		if err != nil {
-			slog.Info("failed to read env", "error", err)
-			result[i] = smtpView{
-				Text: "cannot parse this mail",
+	result := make([]smtpView, len(sessions))
+	for i, session := range sessions {
+		view := smtpView{
+			// SMTP transaction data
+			SMTPFrom:      session.mailFrom,
+			SMTPTo:        session.rcptTo,
+			ReceivedTime:  session.receivedTime,
+			ClientAddr:    session.clientAddr,
+			ClientHost:    session.clientHost,
+			TLSUsed:       session.tlsUsed,
+			Authenticated: session.authenticated,
+			AuthMechanism: session.authMechanism,
+		}
+
+		// Parse email content if available
+		if session.data != "" {
+			e, err := enmime.ReadEnvelope(strings.NewReader(session.data))
+			if err != nil {
+				slog.Info("failed to read envelope", "error", err)
+				view.Text = "cannot parse this mail"
+			} else {
+				view.FromAddressList = getAddressList(e, "from")
+				view.ToAddressList = getAddressList(e, "to")
+				view.CcAddressList = getAddressList(e, "cc")
+				view.BccAddressList = getAddressList(e, "bcc")
+				view.Text = e.Text
+				view.HTML = e.HTML
+
+				// Parse headers (excluding address headers)
+				keys := e.GetHeaderKeys()
+				view.Headers = make([]*smtpViewHeader, 0, len(keys))
+				for _, h := range keys {
+					if !isAddressHeader(h) {
+						view.Headers = append(view.Headers, &smtpViewHeader{
+							Key:   h,
+							Value: e.GetHeader(h),
+						})
+					}
+				}
 			}
-
-			continue
 		}
 
-		s := smtpView{
-			ToAddressList:  getAddressList(e, "to"),
-			CcAddressList:  getAddressList(e, "cc"),
-			BccAddressList: getAddressList(e, "bcc"),
-			Text:           e.Text,
-			HTML:           e.HTML,
-		}
-
-		keys := e.GetHeaderKeys()
-		s.Headers = make([]*smtpViewHeader, 0, len(keys))
-		for _, h := range keys {
-			// ignore to/cc/bcc
-			switch strings.ToLower(h) {
-			case "to", "cc", "bcc":
-
-				continue
-			}
-
-			s.Headers = append(s.Headers, &smtpViewHeader{
-				Key:   h,
-				Value: e.GetHeader(h),
-			})
-		}
-
-		result[i] = s
+		result[i] = view
 	}
 
 	return result
@@ -114,9 +150,103 @@ func getAddressList(e *enmime.Envelope, key string) []*mail.Address {
 	return addrList
 }
 
+func isAddressHeader(header string) bool {
+	switch strings.ToLower(header) {
+	case "to", "cc", "bcc", "from":
+		return true
+	default:
+		return false
+	}
+}
+
+// SearchByField searches for emails containing the specified email address in the given field.
+func (b *smtpBackend) SearchByField(field, email string) ([]smtpView, error) {
+	// Validate field parameter
+	if field == "" {
+		return nil, fmt.Errorf("%w: empty field", ErrInvalidSearchField)
+	}
+
+	// Validate field name before processing
+	switch field {
+	case FieldTo, FieldCC, FieldBCC, FieldFrom:
+		// Valid field, continue
+	default:
+		return nil, fmt.Errorf("%w: %s", ErrInvalidSearchField, field)
+	}
+
+	allData := b.GetAllData()
+	var results []smtpView
+
+	searchEmail := strings.ToLower(email)
+
+	for _, msg := range allData {
+		var found bool
+
+		switch field {
+		case FieldTo:
+			// Search both To header and SMTP RCPT TO
+			found = containsEmailInAddresses(msg.ToAddressList, searchEmail) ||
+				containsEmailInStrings(msg.SMTPTo, searchEmail)
+		case FieldCC:
+			found = containsEmailInAddresses(msg.CcAddressList, searchEmail)
+		case FieldBCC:
+			// BCC only visible in SMTP transaction, not in headers
+			found = containsEmailInAddresses(msg.BccAddressList, searchEmail)
+		case FieldFrom:
+			// Search both From header and SMTP MAIL FROM
+			found = containsEmailInAddresses(msg.FromAddressList, searchEmail) ||
+				strings.ToLower(msg.SMTPFrom) == searchEmail
+		}
+
+		if found {
+			results = append(results, msg)
+		}
+	}
+
+	return results, nil
+}
+
+// containsEmailInAddresses checks if an email address is present in a slice of mail.Address.
+func containsEmailInAddresses(addresses []*mail.Address, searchEmail string) bool {
+	for _, addr := range addresses {
+		if addr != nil && strings.ToLower(addr.Address) == searchEmail {
+			return true
+		}
+	}
+
+	return false
+}
+
+// containsEmailInStrings checks if an email address is present in a slice of strings.
+func containsEmailInStrings(emails []string, searchEmail string) bool {
+	for _, email := range emails {
+		if strings.ToLower(email) == searchEmail {
+			return true
+		}
+	}
+
+	return false
+}
+
 type smtpSession struct {
+	// Existing fields
 	data         string
 	receivedTime time.Time
+
+	// SMTP Transaction Data
+	mailFrom string              // MAIL FROM address
+	mailOpts *smtp.MailOptions   // MAIL FROM options (SIZE, BODY, etc.)
+	rcptTo   []string            // All RCPT TO addresses
+	rcptOpts []*smtp.RcptOptions // RCPT TO options (DSN, etc.)
+
+	// Connection Info
+	clientAddr string // Client IP address
+	clientHost string // HELO/EHLO hostname
+	tlsUsed    bool   // Whether TLS was used
+
+	// Authentication (for future enhancement)
+	authenticated bool   // Whether auth succeeded
+	authMechanism string // PLAIN, LOGIN, etc.
 }
 
 var _ smtp.Session = (*smtpSession)(nil)
@@ -125,11 +255,17 @@ func (s *smtpSession) AuthPlain(_, _ string) error {
 	return nil
 }
 
-func (s *smtpSession) Mail(_ string, _ *smtp.MailOptions) error {
+func (s *smtpSession) Mail(from string, opts *smtp.MailOptions) error {
+	s.mailFrom = from
+	s.mailOpts = opts
+
 	return nil
 }
 
-func (s *smtpSession) Rcpt(string, *smtp.RcptOptions) error {
+func (s *smtpSession) Rcpt(to string, opts *smtp.RcptOptions) error {
+	s.rcptTo = append(s.rcptTo, to)
+	s.rcptOpts = append(s.rcptOpts, opts)
+
 	return nil
 }
 
