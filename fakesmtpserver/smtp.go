@@ -123,7 +123,7 @@ func (s *smtpSession) Mail(from string, opts *smtp.MailOptions) error {
 	return nil
 }
 
-func (s *smtpSession) Rcpt(to string) error {
+func (s *smtpSession) Rcpt(string, *smtp.RcptOptions) error {
 	return nil
 }
 
