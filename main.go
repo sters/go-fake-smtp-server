@@ -2,31 +2,28 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/sters/go-fake-smtp-server/fakesmtpserver"
+	"golang.org/x/sync/errgroup"
 )
 
 func main() {
-	lgr, err := zap.NewProduction()
-	if err != nil {
-		panic(err)
-	}
-	zap.ReplaceGlobals(lgr)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
 	ctx := context.Background()
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
-		zap.L().Info("smtp server", zap.Error(fakesmtpserver.StartSmtpServer()))
+		slog.Info("smtp server", "error", fakesmtpserver.StartSMTPServer())
+
 		return nil
 	})
 	eg.Go(func() error {
-		zap.L().Info("view server", zap.Error(fakesmtpserver.StartViewServer()))
+		slog.Info("view server", "error", fakesmtpserver.StartViewServer())
+
 		return nil
 	})
 
@@ -37,7 +34,7 @@ func main() {
 	// 	for n := 0; n < 100; n++ {
 	// 		c, err := smtp.Dial("localhost:10025")
 	// 		if err != nil {
-	// 			zap.L().Info("smtp client test", zap.Error(err))
+	// 			slog.Info("smtp client test", "error", err)
 	// 			return err
 	// 		}
 	//
@@ -48,7 +45,7 @@ func main() {
 	// 			"This is the email body.\r\n")
 	// 		err = c.SendMail("localhost:10025", to, msg)
 	// 		if err != nil {
-	// 			zap.L().Info("smtp client test", zap.Error(err))
+	// 			slog.Info("smtp client test", "error", err)
 	// 		}
 	//
 	// 		time.Sleep(time.Second * 3)
@@ -61,7 +58,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGTERM, os.Interrupt)
 	select {
 	case <-sigCh:
-		zap.L().Info("Interrupt...")
+		slog.Info("Interrupt...")
 	case <-ctx.Done():
 	}
 }

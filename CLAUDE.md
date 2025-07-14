@@ -60,7 +60,7 @@ The codebase is organized into two main packages:
 ### Key Dependencies
 - `github.com/emersion/go-smtp` - SMTP server implementation
 - `github.com/jhillyerd/enmime` - Email parsing and MIME handling
-- `go.uber.org/zap` - Structured logging
+- `log/slog` - Structured logging (Go standard library)
 - `golang.org/x/sync/errgroup` - Concurrent goroutine management
 
 ## Default Configuration
