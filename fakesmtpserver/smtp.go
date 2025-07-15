@@ -12,15 +12,13 @@ import (
 
 	"github.com/emersion/go-smtp"
 	"github.com/jhillyerd/enmime"
+	"github.com/sters/go-fake-smtp-server/config"
 )
 
 // ErrInvalidSearchField is returned when an invalid search field is specified.
 var ErrInvalidSearchField = errors.New("invalid search field")
 
 const (
-	SMTPAddr = "127.0.0.1:10025"
-	HOSTNAME = "fakeserver"
-
 	// Field names for search validation.
 	FieldTo   = "to"
 	FieldCC   = "cc"
@@ -287,16 +285,16 @@ func (s *smtpSession) Logout() error {
 	return nil
 }
 
-func StartSMTPServer() error {
+func StartSMTPServer(cfg *config.Config) error {
 	s := smtp.NewServer(sharedBackend)
 
-	s.Addr = SMTPAddr
-	s.Domain = HOSTNAME
-	s.ReadTimeout = 10 * time.Second
-	s.WriteTimeout = 10 * time.Second
-	s.MaxMessageBytes = 1024 * 1024
-	s.MaxRecipients = 50
-	s.AllowInsecureAuth = true
+	s.Addr = cfg.SMTPAddr
+	s.Domain = cfg.SMTPHostname
+	s.ReadTimeout = cfg.SMTPReadTimeout
+	s.WriteTimeout = cfg.SMTPWriteTimeout
+	s.MaxMessageBytes = cfg.SMTPMaxMessageBytes
+	s.MaxRecipients = cfg.SMTPMaxRecipients
+	s.AllowInsecureAuth = cfg.SMTPAllowInsecureAuth
 	// s.Debug = os.Stdout
 
 	slog.Info("Starting SMTP fake server", "addr", s.Addr)

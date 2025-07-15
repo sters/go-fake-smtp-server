@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"time"
+
+	"github.com/sters/go-fake-smtp-server/config"
 )
 
-const ViewAddr = "127.0.0.1:11080"
-
 // StartViewServer starts the HTTP server that serves captured emails and search endpoints.
-func StartViewServer() error {
+func StartViewServer(cfg *config.Config) error {
 	mux := http.NewServeMux()
 
 	// Register all handlers
@@ -20,10 +19,10 @@ func StartViewServer() error {
 
 	server := &http.Server{
 		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
+		ReadHeaderTimeout: cfg.ViewReadHeaderTimeout,
 	}
 
-	l, err := ln()
+	l, err := ln(cfg)
 	if err != nil {
 		return err
 	}
@@ -35,8 +34,8 @@ func StartViewServer() error {
 	return nil
 }
 
-func ln() (net.Listener, error) {
-	ln, err := net.Listen("tcp", ViewAddr)
+func ln(cfg *config.Config) (net.Listener, error) {
+	ln, err := net.Listen("tcp", cfg.ViewAddr)
 	if err != nil {
 		return nil, fmt.Errorf("listen error: %w", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/sters/go-fake-smtp-server/config"
 	"github.com/sters/go-fake-smtp-server/fakesmtpserver"
 	"golang.org/x/sync/errgroup"
 )
@@ -14,15 +15,21 @@ import (
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		slog.Error("Failed to load configuration", "error", err)
+		os.Exit(1)
+	}
+
 	ctx := context.Background()
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
-		slog.Info("smtp server", "error", fakesmtpserver.StartSMTPServer())
+		slog.Info("smtp server", "error", fakesmtpserver.StartSMTPServer(cfg))
 
 		return nil
 	})
 	eg.Go(func() error {
-		slog.Info("view server", "error", fakesmtpserver.StartViewServer())
+		slog.Info("view server", "error", fakesmtpserver.StartViewServer(cfg))
 
 		return nil
 	})
