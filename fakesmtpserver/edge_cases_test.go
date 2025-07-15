@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+//nolint:maintidx // Comprehensive test coverage requires high complexity
 func TestEdgeCasesAndErrorHandling(t *testing.T) {
 	t.Run("empty_backend", func(t *testing.T) {
 		backend := &smtpBackend{}
