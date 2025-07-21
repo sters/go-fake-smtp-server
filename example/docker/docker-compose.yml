@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  fake-smtp-server:
+    build:
+      context: ../..
+      dockerfile: example/docker/Dockerfile
+    container_name: go-fake-smtp-server
+    ports:
+      - "10025:10025"  # SMTP port
+      - "11080:11080"  # HTTP port
+    environment:
+      - SMTP_ADDR=0.0.0.0:10025
+      - VIEW_ADDR=0.0.0.0:11080
+      - SMTP_HOSTNAME=fakeserver
+      - SMTP_READ_TIMEOUT=10s
+      - SMTP_WRITE_TIMEOUT=10s
+      - SMTP_MAX_MESSAGE_BYTES=1048576
+      - SMTP_MAX_RECIPIENTS=50
+      - SMTP_ALLOW_INSECURE_AUTH=true
+      - VIEW_READ_HEADER_TIMEOUT=10s
+    restart: unless-stopped
