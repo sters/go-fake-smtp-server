@@ -1,6 +1,6 @@
 module github.com/sters/go-fake-smtp-server
 
-go 1.24
+go 1.24.0
 
 tool github.com/golangci/golangci-lint/cmd/golangci-lint
 
@@ -8,7 +8,7 @@ require (
 	github.com/caarlos0/env/v11 v11.3.1
 	github.com/emersion/go-smtp v0.23.0
 	github.com/jhillyerd/enmime v1.3.0
-	golang.org/x/sync v0.12.0
+	golang.org/x/sync v0.19.0
 )
 
 require (
